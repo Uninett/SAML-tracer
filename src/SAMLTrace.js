@@ -341,8 +341,6 @@ SAMLTrace.RequestItem = function(request) {
   }
 };
 SAMLTrace.RequestItem.prototype = {
-  'shortPadding' :  28,
-  'longPadding'  :  70,
 
   'showHTTP' : function(target) {
     var doc = target.ownerDocument;
@@ -401,73 +399,120 @@ SAMLTrace.RequestItem.prototype = {
   },
   
   'showSummary' : function(target) {
-    var doc = target.ownerDocument;
-    var samlSummary = "";
+    var samlSummary = '<div id="summary"><table>';
     var parser  = new DOMParser();
-    var xmldoc  = parser.parseFromString(this.request.saml,"text/xml");
-
+    var xmldoc  = parser.parseFromString(this.request.saml, "text/xml");
+  
+    
+    /* Helper functions for summary table */
+    function appendHeader(text) {
+      samlSummary += `<tr><th colspan=2>${text}</th></tr>`;
+    }
+  
+    function appendRow(key, value) {
+      if (value) {
+        samlSummary += `<tr><td class="hljs-attribute">${key}</td><td> ${value}</td></tr>`;
+      }
+    }
+  
+    function appendAttributes(attributeName, attributes) {
+      for (let attr of attributes) {
+        for (let value of attr.children) {
+          appendRow(attr.getAttribute(attributeName), value.textContent.trim());
+        }
+      }
+    }
+  
+    function tryGetByQuerySelector(element, selector) {
+      return element.querySelector(selector)?.textContent ?? '';
+    }
+  
     /* Check for AuthnRequest */
     var AuthnRequest = xmldoc.getElementsByTagNameNS('*','AuthnRequest');
-    if (AuthnRequest.length>0) {
-        samlSummary += 'AuthnRequest: \n';
-        if (AuthnRequest[0].attributes['Destination'])                 { samlSummary += this.summaryAdd(AuthnRequest[0].attributes['Destination'].value                , 'Destination'                ); }
-        if (AuthnRequest[0].attributes['ForceAuthn'])                  { samlSummary += this.summaryAdd(AuthnRequest[0].attributes['ForceAuthn'].value                 , 'ForceAuthn'                 ); }
-        if (AuthnRequest[0].attributes['AssertionConsumerServiceURL']) { samlSummary += this.summaryAdd(AuthnRequest[0].attributes['AssertionConsumerServiceURL'].value, 'AssertionConsumerServiceURL'); }
-    }
-    
-    /* Check for Issuer*/
-    var Issuer = xmldoc.getElementsByTagNameNS('*','Issuer');
-    if (Issuer.length>0) { 
-        samlSummary += this.summaryAdd(Issuer[0].textContent,'Issuer');
-    }
-
-    /* Check for Subject */
-    var Subject = xmldoc.getElementsByTagNameNS('*','Subject');
-    if (Subject.length>0) {
-        samlSummary += this.summaryAdd(Subject[0].textContent,'Subject');
-    }
-
-    /* Check for NameID */
-    var NameID = xmldoc.getElementsByTagNameNS('*','NameID');
-    if (NameID.length>0) {
-        samlSummary += this.summaryAdd(NameID[0].textContent,'NameID');
-    }
-    /* Check for AttributeStatement */
-    var AttributeStatement = xmldoc.getElementsByTagNameNS('*','AttributeStatement');
-    if (AttributeStatement.length>0) {
-        var AttributeStatementChilds = AttributeStatement[0].childNodes;
-        if (AttributeStatementChilds.length>0) { 
-            samlSummary += "\nAttributeStatement:\n";}
-        for (i = 0; i < AttributeStatementChilds.length; i++) {
-            var attribute = AttributeStatementChilds[i];
-            var attributeName = attribute.getAttribute('Name');
-            for (j = 0; j<attribute.childNodes.length; j++) {
-                    samlSummary += this.summaryAdd(attribute.childNodes[j].textContent,attributeName,' * ',this.longPadding);
-            }
+    if (AuthnRequest.length>0) { // We found AuthnRequest!
+      appendHeader('AuthnRequest');
+      for (let ArAtt of AuthnRequest[0].attributes) {
+        if (!ArAtt.name.startsWith('xmlns')) {
+          appendRow(ArAtt.name, ArAtt.value);
         }
+      }
+      appendRow('Issuer', tryGetByQuerySelector(AuthnRequest[0], 'Issuer'));
     }
-    
-    /* Check for LogoutRequest */
-    var LogoutRequest = xmldoc.getElementsByTagNameNS('*','LogoutRequest');
-    if (LogoutRequest.length>0) {
-        samlSummary += 'LogoutRequest: \n';
-        if (AuthnRequest[0].attributes['Destination']) { 
-          samlSummary += this.summaryAddAttVal(AuthnRequest[0].attributes['Destination'].value,'Destination');
-        }
-    }
-    
-
-    target.appendChild(doc.createTextNode(samlSummary));
-  },
   
-  'summaryAdd' : function(value,description,decorator='',padLen=this.shortPadding) {
-    let s="";
-    if (value) {
-      s += (decorator+description).padEnd(padLen," ");
-      s += "= "+value;
-      s += "\n";
+    /* Check for SAML:2.0:protocol:Response' */
+    var SamlResponse = xmldoc.getElementsByTagNameNS('urn:oasis:names:tc:SAML:2.0:protocol','Response');
+    if (SamlResponse.length>0) { // We found SamlResponse!
+      appendHeader('SAML2.0 Response');
+      appendRow('Destination', SamlResponse[0].getAttribute('Destination'));
+      appendRow('ID', SamlResponse[0].getAttribute('ID'));
+      appendRow('Version', SamlResponse[0].getAttribute('Version'));
+      appendRow('IssueInstant', SamlResponse[0].getAttribute('IssueInstant'));
+      appendRow('Issuer', tryGetByQuerySelector(SamlResponse[0], 'Issuer'));
     }
-    return s;
+  
+    /* Check for RequestSecurityTokenResponse */
+    var SecTokResponse = xmldoc.getElementsByTagNameNS('http://docs.oasis-open.org/ws-sx/ws-trust/200512','RequestSecurityTokenResponse'); // WS-Fed + SAML1.1
+    if (SecTokResponse.length === 0) {
+      SecTokResponse = xmldoc.getElementsByTagNameNS('http://schemas.xmlsoap.org/ws/2005/02/trust','RequestSecurityTokenResponse'); // WS-Fed + SAML2.0
+    }
+    if (SecTokResponse.length>0) { // We found RequestSecurityTokenResponse!
+      appendHeader('RequestSecurityTokenResponse');
+      appendRow('TokenType', tryGetByQuerySelector(SecTokResponse[0], 'TokenType'));
+      appendRow('AppliesTo', tryGetByQuerySelector(SecTokResponse[0], 'AppliesTo'));
+      appendRow('Lifetime - Created', tryGetByQuerySelector(SecTokResponse[0], 'Lifetime > Created'));
+      appendRow('Lifetime - Expires', tryGetByQuerySelector(SecTokResponse[0], 'Lifetime > Expires'));
+    }
+  
+    /* Check for SAML:2.0:Assertion */
+    var SamlAssertion = xmldoc.getElementsByTagNameNS('urn:oasis:names:tc:SAML:2.0:assertion','Assertion');
+    if (SamlAssertion.length>0) {
+      appendHeader('SAML 2.0 Assertion');
+      appendRow('ID', SamlAssertion[0].getAttribute('ID'));
+      appendRow('Version', SamlAssertion[0].getAttribute('Version'));
+      appendRow('IssueInstant', SamlAssertion[0].getAttribute('IssueInstant'));
+      appendRow('Subject', tryGetByQuerySelector(SamlAssertion[0], 'Subject > NameID'));
+  
+      /* Check for AttributeStatement */
+      var AttributeStatement = xmldoc.getElementsByTagNameNS('urn:oasis:names:tc:SAML:2.0:assertion','AttributeStatement');
+      if (AttributeStatement.length>0) {
+        appendHeader('SAML 2.0 AttributeStatement');
+        appendAttributes('Name', AttributeStatement[0].children);
+      }
+    }
+  
+    /* Check for SAML:1.0:Assertion */
+    var Saml1Assertion = xmldoc.getElementsByTagNameNS('urn:oasis:names:tc:SAML:1.0:assertion','Assertion');
+    if (Saml1Assertion.length>0) {
+      appendHeader('SAML 1.0 Assertion');
+      appendRow('AssertionID', Saml1Assertion[0].getAttribute('AssertionID'));
+      appendRow('MajorVersion', Saml1Assertion[0].getAttribute('MajorVersion'));
+      appendRow('MinorVersion', Saml1Assertion[0].getAttribute('MinorVersion'));
+      appendRow('IssueInstant', Saml1Assertion[0].getAttribute('IssueInstant'));
+      appendRow('Issuer', Saml1Assertion[0].getAttribute('Issuer'));
+      appendRow('Audience', tryGetByQuerySelector(Saml1Assertion[0], 'Conditions > AudienceRestrictionCondition > Audience'));
+      appendRow('Subject', tryGetByQuerySelector(Saml1Assertion[0], 'Subject > NameIdentifier'));
+  
+      //Attributes
+      var AttributeStatement = xmldoc.getElementsByTagNameNS('urn:oasis:names:tc:SAML:1.0:assertion','AttributeStatement');
+      if (AttributeStatement.length>0) {
+        appendHeader('SAML 1.0 AttributeStatement');
+        appendRow('Subject', tryGetByQuerySelector(AttributeStatement[0], 'NameIdentifier'));
+        appendAttributes('AttributeName', AttributeStatement[0].querySelectorAll("Attribute"));
+      }
+    }
+  
+    /* Check for X509 Certificates (SAML1+2) */
+    var AttachedCertificates = xmldoc.getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#','X509Certificate');
+    if (AttachedCertificates.length>0) {
+      appendHeader('Embedded certificates');
+      for (let i=0;i<AttachedCertificates.length;i++) {
+        let href = `<a href="data:application/x-x509-ca-cert;base64;charset=utf8,${AttachedCertificates[i].textContent.trim()}" download="saml${i}.cer">Download</a>`
+        appendRow(`Certificate ${i}`, href);
+      }
+    }
+  
+    samlSummary+='</table></div>';
+    target.innerHTML=samlSummary;
   },
 
 
